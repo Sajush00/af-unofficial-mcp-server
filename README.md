@@ -20,6 +20,8 @@ the SMS login flow — the one thing an agent cannot do by itself.
 
 ## Quick start
 
+Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
+
 ```bash
 uv sync
 
@@ -136,3 +138,7 @@ tests, so the suite fails when the codebase regresses:
 
 Unofficial and unaffiliated with Anytime Fitness. Uses the app's own
 endpoints with the account owner's credentials, read-only, for personal use.
+
+## License
+
+MIT © 2026 Sajush Arukat. See [LICENSE](LICENSE).

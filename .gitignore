@@ -5,4 +5,7 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 dist/
+build/
+.af_token.json
 .af_session.json
+.DS_Store

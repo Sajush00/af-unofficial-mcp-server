@@ -3,7 +3,16 @@ name = "af-unofficial-mcp-server"
 version = "0.2.0"
 description = "Unofficial Anytime Fitness MCP server, with a small auth-only CLI."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
+keywords = ["mcp", "model-context-protocol", "fastmcp", "anytime-fitness"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
 dependencies = ["fastmcp>=2.0"]
 
 [project.scripts]
