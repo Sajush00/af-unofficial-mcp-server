@@ -1,41 +1,76 @@
 # af-unofficial-mcp-server
 
-Unofficial MCP server for Anytime Fitness data: live gym occupancy, busy
-forecasts, nearby clubs, and personal visit history. It talks to the AF App
-4.5.0 mobile API. Read-only, single
-account, personal use.
+Ask your AI assistant how busy the gym is.
 
-The MCP server is the primary interface. The `af-gym` CLI exists only for
-the SMS login flow — the one thing an agent cannot do by itself.
+This is a small unofficial tool I built for myself. It lets your AI
+assistant answer questions about your Anytime Fitness club: how many people
+are in right now (the same live count the official app shows), whether now
+is a good time to head over, when it is usually quiet, and how often you
+have been going.
 
-## Tools
+Anytime Fitness does not publish an API, so I rebuilt what I needed by
+taking the official app apart and asking the same servers it uses. That
+also means this can break when they update the app. Unofficial,
+unaffiliated, read-only, personal use.
 
-| Tool | Returns |
-|---|---|
-| `occupancy` | Live headcount now, a go-now verdict, and typical counts for the rest of today |
-| `forecast` | Typical hourly pattern for a day (100-day rolling averages) |
-| `nearby_clubs` | Clubs near the home gym, nearest first, each with a live count |
-| `visits` | Check-ins in a date range, newest first, with totals and your usual day and hour |
-| `auth_status` | Session metadata only, never token values |
+## What you can ask
 
-## Quick start
+- "How busy is the gym right now?" You get the live count and how it
+  compares to usual, like "6 people in, much quieter than usual."
+- "Should I go now?" One of five answers: go now, good time, normal, maybe
+  wait, skip it.
+- "What is Saturday morning usually like?" The typical pattern for the day,
+  hour by hour.
+- "Any quieter clubs near me?" Clubs around yours, nearest first, each with
+  a live count.
+- "How often have I been going?" Your visit history, with your usual day
+  and hour.
 
-Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
+## Where the numbers come from
+
+- The live count is the club's busy meter, people counted through the door.
+  It is the same number the official app shows.
+- "Usually" and "typical" mean a 100-day rolling average for that hour, in
+  the club's local time. The should-I-go answer compares the live count to
+  the usual count for the same hour.
+- Visit history is your own check-ins.
+- Everything is read-only. It looks, it cannot touch.
+
+## Which gym is "your gym"
+
+Your home club, the one set on your Anytime Fitness account. The server
+looks your home club up fresh on every question, so if you change it in the
+app, the answers follow.
+
+You can also ask about any other club by its club code, a short identifier
+like `AU-0000`. The nearby-clubs answer lists the codes for clubs near you.
+
+## Setting it up
+
+You need [uv](https://docs.astral.sh/uv/) and an assistant that speaks MCP,
+the standard way assistants connect to outside tools. Claude Desktop,
+Claude Code, and Hermes all work.
+
+**1. Install the code.** Download or clone this project, open a terminal in
+its folder, and run:
 
 ```bash
 uv sync
-
-# One-time login. Cognito texts a code to the number registered with the club;
-# the command prompts for it. Add --code to run it non-interactively.
-uv run af-gym login --phone +61400000000
-
-# Run the MCP server (stdio; MCP clients usually launch it for you)
-uv run af-mcp
 ```
 
-## Connect an agent
+**2. Log in once.** Anytime Fitness texts a code to the number registered
+on your account, and the command asks you for it:
 
-Hermes Agent (`~/.hermes/config.yaml`):
+```bash
+uv run af-gym login --phone +61400000000
+```
+
+The login renews itself as long as you use it. It only needs another SMS
+after about a month of no use.
+
+**3. Point your assistant at the server.** Pick your client.
+
+Hermes Agent, in `~/.hermes/config.yaml`:
 
 ```yaml
 mcp_servers:
@@ -44,7 +79,7 @@ mcp_servers:
     args: ["run", "--directory", "/absolute/path/to/af-unofficial-mcp-server", "af-mcp"]
 ```
 
-Claude Desktop (`claude_desktop_config.json`):
+Claude Desktop, in `claude_desktop_config.json`:
 
 ```json
 {
@@ -63,51 +98,61 @@ Claude Code:
 claude mcp add af-gym -- uv run --directory /absolute/path/to/af-unofficial-mcp-server af-mcp
 ```
 
-## CLI
+**4. Ask away.** "Is the gym busy right now?"
 
-Authentication only. Queries live on the MCP server (see
-[ADR 0004](docs/adr/0004-auth-only-cli.md)); the CLI cannot grow query
-commands back.
+## The login and your data
 
-| Command | Does |
+| Command | What it does |
 |---|---|
-| `af-gym login --phone <n> [--code <c>]` | SMS login in one step; prompts for the code, `--code` for scripts |
-| `af-gym status` | Session metadata, never token values |
-| `af-gym logout` | Revoke the refresh token and delete local tokens |
+| `uv run af-gym login --phone <number>` | Texts you a login code and saves the session (add `--code` to skip the prompt) |
+| `uv run af-gym status` | Shows whether you are logged in and until when |
+| `uv run af-gym logout` | Revokes the session and deletes it from your computer |
 
-## How it is built
+Logging in needs no password, just the SMS code. The session lives on your
+computer at `~/.af_token.json` and goes nowhere except to Anytime Fitness.
+No command or tool ever shows the token values.
+
+## For developers
+
+`make check` runs everything: ruff for lint and formatting, mypy for types,
+the project's static checks, and the test suite. The tests run offline
+against a fake network, so they need no account and no internet.
+
+The MCP server is the product. The CLI does login, status, and logout, and
+stays that way on purpose; see [ADR 0004](docs/adr/0004-auth-only-cli.md).
+Decisions are recorded in [docs/adr](docs/adr).
+
+| Tool | Answers |
+|---|---|
+| `occupancy` | Live headcount now, a go-now verdict, and typical counts for the rest of today |
+| `forecast` | Typical hourly pattern for a day |
+| `nearby_clubs` | Clubs near the home gym, nearest first, each with a live count |
+| `visits` | Check-ins in a date range, newest first, with totals and your usual day and hour |
+| `auth_status` | Session metadata only, never token values |
+
+### Project layout
 
 ```
 src/af_mcp/
 ├── http.py        the only module that touches the network
-├── auth.py        Cognito SMS login, token lifecycle
-├── transport.py   authenticated GETs against the mobile API
-├── errors.py      typed error hierarchy
-├── timeutil.py    club-local time (zoneinfo, DST-correct)
+├── auth.py        SMS login and the token lifecycle
+├── transport.py   the API requests the tools need
+├── errors.py      typed error classes
+├── timeutil.py    club-local time, DST-safe (zoneinfo)
 ├── clubs.py       home gym, busy meter, nearby search
-├── occupancy.py   live occupancy + go-now verdict, forecast
-├── visits.py      windowed visit history
-├── server.py      the MCP tool surface
-└── cli.py         auth commands only (login, status, logout)
-tools/static_checks.py   project-specific lint rules (see below)
-tests/                   offline test suite (fake transport, no sockets)
+├── occupancy.py   live occupancy, verdict, forecast
+├── visits.py      visit history, bounded windows
+├── server.py      where the MCP tools live
+└── cli.py         login, status, logout
+tools/static_checks.py   project-specific lint rules
+tests/                   offline test suite
 ```
 
-`server.py` is the product; `cli.py` stays small because reading an SMS code
-off a phone is the one step no agent can take for you.
+### Why the static checks exist
 
-## Checks
-
-`make check` runs, in order:
-
-1. `ruff check` with a broad rule set (see `pyproject.toml`)
-2. `mypy` (typed defs required across the package)
-3. `tools/static_checks.py`, project-specific rules
-4. `pytest`, the offline test suite
-
-Rules in `tools/static_checks.py` exist because each one names a mistake
-that already happened. They run in CI-of-one (`make check`) and as regular
-tests, so the suite fails when the codebase regresses:
+Each rule in `tools/static_checks.py` names a mistake that already happened.
+The rules run inside `make check` and as regular tests, so the suite fails
+if the codebase regresses.
 
 | Rule | Fails when | Because |
 |---|---|---|
@@ -122,22 +167,10 @@ tests, so the suite fails when the codebase regresses:
 | AF009 | a network call runs at import time | Importing a module must never touch the network; tools fetch, imports do not |
 | AF010 | `cli.py` imports `clubs`, `occupancy`, `visits`, or `transport` | The CLI is auth-only (ADR 0004); querying lives on the MCP side so the two surfaces cannot drift |
 
-## Auth model
-
-- Tokens live at `~/.af_token.json` (override: `AF_TOKEN_FILE`). The file is
-  outside the repository and never committed.
-- Access tokens last 24 hours and refresh silently.
-- Refresh tokens last about 30 days and are not rotated, so one SMS login
-  covers roughly a month of use. After ~30 idle days, `auth_status` reports
-  the session is gone and a fresh login is due.
-- `af-gym logout` revokes the refresh token (best effort) and deletes the
-  local state.
-- No tool ever returns token values.
-
 ## Disclaimer
 
-Unofficial and unaffiliated with Anytime Fitness. Uses the app's own
-endpoints with the account owner's credentials, read-only, for personal use.
+Unofficial and unaffiliated with Anytime Fitness. It uses the app's own
+servers with the account owner's credentials, read-only, for personal use.
 
 ## License
 
