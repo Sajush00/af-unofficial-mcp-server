@@ -9,7 +9,7 @@ from typing import Any, NoReturn
 
 import pytest
 
-from af_mcp import http
+from af_mcp import http, timeutil
 from factories import write_token
 
 Response = Any | Exception | Callable[[str, dict[str, str], bytes | None], Any]
@@ -69,8 +69,10 @@ def _isolated_auth(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Every test starts logged out, with auth files inside tmp_path."""
     monkeypatch.setenv("AF_TOKEN_FILE", str(tmp_path / "token.json"))
     monkeypatch.setenv("AF_SESSION_FILE", str(tmp_path / "session.json"))
-    monkeypatch.delenv("AF_CLUB_TZ", raising=False)
-    return tmp_path
+    monkeypatch.setenv("AF_CLUB_TZ", "Australia/Sydney")
+    timeutil.club_zone.cache_clear()
+    yield tmp_path
+    timeutil.club_zone.cache_clear()
 
 
 @pytest.fixture

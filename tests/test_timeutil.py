@@ -8,6 +8,25 @@ import pytest
 
 from af_mcp import timeutil
 from af_mcp.errors import InvalidInputError
+from factories import home_gym
+
+
+def test_club_zone_is_resolved_from_home_gym_coordinates(
+    fake_api, auth_env, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.delenv("AF_CLUB_TZ")
+    timeutil.club_zone.cache_clear()
+    fake_api.route("me/user/my-gym", home_gym())
+
+    assert str(timeutil.club_zone()) == "Australia/Sydney"
+    assert len(fake_api.calls) == 1
+
+
+def test_bad_timezone_override_is_rejected(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("AF_CLUB_TZ", "Not/A-Timezone")
+    timeutil.club_zone.cache_clear()
+    with pytest.raises(InvalidInputError, match="AF_CLUB_TZ"):
+        timeutil.club_zone()
 
 
 def test_bare_date_start_snaps_to_midnight_club_time():

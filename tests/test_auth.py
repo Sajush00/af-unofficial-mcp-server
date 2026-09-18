@@ -42,6 +42,17 @@ def test_expired_token_refreshes_and_keeps_the_refresh_token(fake_api, auth_env:
     assert stored["expires_at"] > time.time()
 
 
+def test_refreshed_token_file_is_private(fake_api, auth_env: Path):
+    token_file = write_token(auth_env, expires_in=-10)
+    token_file.chmod(0o666)
+    fake_api.route(
+        COGNITO,
+        {"AuthenticationResult": {"AccessToken": "fresh", "ExpiresIn": 86400}},
+    )
+    auth.access_token()
+    assert token_file.stat().st_mode & 0o777 == 0o600
+
+
 def test_expired_token_with_new_refresh_token_uses_it(fake_api, auth_env: Path):
     write_token(auth_env, expires_in=-10)
     fake_api.route(
@@ -83,6 +94,12 @@ def test_request_sms_code_stores_the_session(fake_api, auth_env: Path):
     state = json.loads((auth_env / "session.json").read_text())
     assert state["phone"] == "+61400000000"
     assert state["session"] == "session-123"
+
+
+def test_session_file_is_private(fake_api, auth_env: Path):
+    fake_api.route(COGNITO, {"Session": "session-123", "ChallengeName": "SMS_OTP"})
+    auth.request_sms_code("+61400000000")
+    assert (auth_env / "session.json").stat().st_mode & 0o777 == 0o600
 
 
 def test_request_sms_code_without_session_is_an_error(fake_api, auth_env: Path):

@@ -13,7 +13,10 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
 ]
-dependencies = ["fastmcp>=2.0"]
+dependencies = [
+    "fastmcp>=2.0",
+    "tzfpy>=1.1,<2",
+]
 
 [project.scripts]
 af-mcp = "af_mcp.server:main"

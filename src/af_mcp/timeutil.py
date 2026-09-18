@@ -11,16 +11,41 @@ from __future__ import annotations
 
 import os
 from datetime import UTC, datetime
-from zoneinfo import ZoneInfo
+from functools import lru_cache
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from af_mcp.errors import InvalidInputError
+from tzfpy import get_tz
 
-DEFAULT_CLUB_TIMEZONE = "Australia/Sydney"
+from af_mcp.errors import AFError, InvalidInputError
 
 
+@lru_cache(maxsize=1)
 def club_zone() -> ZoneInfo:
-    """The home club's timezone (AF_CLUB_TZ overrides the default)."""
-    return ZoneInfo(os.environ.get("AF_CLUB_TZ", DEFAULT_CLUB_TIMEZONE))
+    """Return the home club's timezone, with AF_CLUB_TZ as an override.
+
+    The automatic result is cached for the life of the server. Restart the
+    server after changing the home club in the AF app.
+    """
+    override = os.environ.get("AF_CLUB_TZ")
+    if override:
+        try:
+            return ZoneInfo(override)
+        except ZoneInfoNotFoundError as exc:
+            raise InvalidInputError(f"Unknown AF_CLUB_TZ timezone: {override!r}") from exc
+
+    # Import lazily to avoid an auth -> timeutil -> clubs import cycle.
+    from af_mcp.clubs import home_gym
+
+    gym = home_gym()
+    coordinates = gym.get("coordinates") or {}
+    latitude = coordinates.get("latitude")
+    longitude = coordinates.get("longitude")
+    if latitude is None or longitude is None:
+        raise AFError("The home club profile did not include coordinates for timezone lookup.")
+    name = get_tz(float(longitude), float(latitude))
+    if name is None:
+        raise AFError("Could not determine the home club timezone from its coordinates.")
+    return ZoneInfo(name)
 
 
 def now() -> datetime:

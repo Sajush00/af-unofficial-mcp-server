@@ -27,6 +27,20 @@ COGNITO_CLIENT_ID = "r56fk5c6c5gfaegh5j673hdeq"
 LOGIN_HINT = "No usable Anytime Fitness session. Run: af-gym login --phone <number>."
 
 
+def _write_private(path: Path, content: str) -> None:
+    """Write sensitive state so only the current user can read it."""
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        if os.name != "nt":
+            os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w") as file:
+            descriptor = -1
+            file.write(content)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
 def default_token_file() -> Path:
     """Token file path: AF_TOKEN_FILE, else ~/.af_token.json."""
     override = os.environ.get("AF_TOKEN_FILE")
@@ -62,14 +76,15 @@ class Authenticator:
             raise LoginRequiredError(
                 f"Cognito did not start an SMS challenge: {json.dumps(response)[:200]}"
             )
-        self.session_file.write_text(
+        _write_private(
+            self.session_file,
             json.dumps(
                 {
                     "phone": phone,
                     "session": session,
                     "challenge": response.get("ChallengeName", "SMS_OTP"),
                 }
-            )
+            ),
         )
 
     def verify_sms_code(self, code: str) -> None:
@@ -175,7 +190,7 @@ class Authenticator:
             "RefreshToken": result.get("RefreshToken"),
             "expires_at": time.time() + float(result.get("ExpiresIn", 3600)),
         }
-        self.token_file.write_text(json.dumps(stored))
+        _write_private(self.token_file, json.dumps(stored))
         return stored
 
     def _refresh(self, stored: dict[str, Any]) -> dict[str, Any]:

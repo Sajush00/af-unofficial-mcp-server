@@ -1,14 +1,14 @@
 # af-unofficial-mcp-server
 
-I go to Anytime Fitness and I got tired of opening the app before every gym
+I got tired of opening the AF app before every gym
 trip just to check how busy it was, so I built this. Now I just ask my
 assistant "how busy is the gym?" and it comes back with the live headcount,
 how that compares to normal, and whether now is a good time to go.
 
 It is unofficial. Anytime Fitness does not publish an API, so I took
-version 4.5.0 of their app apart, worked out which requests it makes, and
-made the same ones. It will break when they change something on their side,
-and hopefully I fix it when it does. ## What you can ask
+version 4.5.0 of its app apart, worked out which requests it makes, and made
+the same ones. I have used it for a few months without trouble, but changes
+to the official app may break it. ## What you can ask
 
 - "How busy is it right now?" The live count, plus how it compares to the
   usual crowd for this hour.
@@ -28,8 +28,9 @@ now, and how many are usually there around this time.
 
 The first one comes straight from the club's door counters, the same busy
 meter the official app shows you. The second is a 100-day rolling average
-for that hour, in the club's local time. If the live count is way below
-usual, it says go now, and if it is way above, it says skip it. In between
+for that hour. The server finds the club's timezone from its coordinates so
+forecasts and visit dates use local time. If the live count is well below
+usual, it says go now. If it is well above usual, it says skip it. In between
 you get good time, normal, or maybe wait.
 
 Visit history is just your own check-ins, which is how it figures out when
@@ -38,11 +39,10 @@ you usually go.
 ## Which gym is "my gym"?
 
 Whatever club is set as the home club on your Anytime Fitness account.
-Mine is AU-0000, the Example Club club in Sydney. The server checks this every
-time, so if you switch your home club in the app, it picks that up.
+The server checks this each time, so it picks up changes made in the app.
 
 You can also ask about a specific club by its code, and if you don't know
-other clubs' codes, the nearby answer lists them.
+other clubs' codes, the nearby command lists them.
 
 ## Setting it up
 
@@ -106,44 +106,54 @@ claude mcp add af-gym -- uv run --directory /absolute/path/to/af-unofficial-mcp-
 | `uv run af-gym status` | Says whether you are logged in, and until when |
 | `uv run af-gym logout` | Revokes the session and deletes it from your computer |
 
-There is no password, just the SMS code. The session file sits at
-`~/.af_token.json` on your machine and goes nowhere except Anytime Fitness.
-No command or tool ever prints the token values.
+There is no password, just the SMS code. Tokens are stored in
+`~/.af_token.json`. A pending login challenge uses `~/.af_session.json`.
+Both files are readable only by your user account, and no command or MCP tool
+prints their contents.
+
+The server normally finds the home club's timezone from its coordinates. To
+override it, set `AF_CLUB_TZ` to an IANA timezone such as
+`Australia/Sydney`, then restart the server.
 
 ## For developers
 
-`make check` runs everything: ruff for lint and formatting, mypy for types,
-a bunch of custom lint rules for this project, and the test suite. The tests
-never touch the network, so they need no account and no internet.
+Run every local check with:
 
-The MCP server is the product. The CLI does login, status, and logout, and
-stays that way on purpose, with the reasoning in
-[ADR 0004](docs/adr/0004-auth-only-cli.md). The other decisions are in
+```bash
+make check
+```
+
+That command runs Ruff, mypy, the project-specific static checks, and the
+offline test suite. The tests replace the HTTP boundary and never contact
+Anytime Fitness.
+
+The MCP server is the main interface. The CLI only handles login, status,
+and logout because the SMS step needs direct user input. The reasoning is in
+[ADR 0004](docs/adr/0004-auth-only-cli.md), with the other decisions in
 [docs/adr](docs/adr).
 
-| Tool | Answers |
+| Tool | What it returns |
 |---|---|
-| `occupancy` | Live headcount now, a go-now verdict, and typical counts for the rest of today |
-| `forecast` | Typical hourly pattern for a day |
-| `nearby_clubs` | Clubs near the home gym, nearest first, each with a live count |
-| `visits` | Check-ins in a date range, newest first, with totals and your usual day and hour |
-| `auth_status` | Session metadata only, never token values |
+| `occupancy` | Live headcount, a go-now verdict, and typical counts for the rest of the day |
+| `forecast` | The typical hourly pattern for a day |
+| `nearby_clubs` | Nearby clubs with distance and live headcount |
+| `visits` | Check-ins in a date range, totals, and usual visit times |
+| `auth_status` | Session metadata without token values |
 
 ### Project layout
 
-```
+```text
 src/af_mcp/
-├── http.py        the only module that touches the network
-├── auth.py        SMS login and the token lifecycle
-├── transport.py   the API requests the tools need
-├── errors.py      typed error classes
-├── timeutil.py    club-local time, DST-safe via zoneinfo
-├── clubs.py       home gym, busy meter, nearby search
-├── occupancy.py   live occupancy, verdict, forecast
-├── visits.py      visit history, bounded windows
-├── server.py      where the MCP tools live
-└── cli.py         login, status, logout
-tools/static_checks.py   project-specific lint rules
+├── http.py        the only module that opens network connections
+├── auth.py        SMS login and token storage
+├── transport.py   authenticated Anytime Fitness API requests
+├── clubs.py       home club, busy meter, and nearby search
+├── occupancy.py   live occupancy, verdicts, and forecasts
+├── visits.py      bounded visit history and summaries
+├── timeutil.py    club-local time and timezone lookup
+├── server.py      MCP tools
+└── cli.py         login, status, and logout
+tools/static_checks.py   project-specific checks
 tests/                   offline test suite
 ```
 
