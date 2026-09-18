@@ -1,8 +1,9 @@
-"""Occupancy, forecast, and go-now verdict builders."""
+"""Occupancy and forecast: the live picture and the go-now verdict."""
 
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+from typing import Any
 
 from af_mcp import clubs, timeutil
 from af_mcp.errors import InvalidInputError
@@ -14,24 +15,38 @@ VERDICT_BANDS = (
     (1.15, "normal"),
     (1.50, "wait"),
 )
+VERDICT_MESSAGES = {
+    "go-now": "Much quieter than usual. Go now.",
+    "good-time": "Quieter than usual. Good time to go.",
+    "normal": "About normal for this hour.",
+    "wait": "Busier than usual. Maybe wait an hour.",
+    "skip": "Unusually packed. Skip it if you can.",
+    "no-live-data": "This club has no live occupancy right now.",
+    "no-baseline": "No typical baseline for this hour.",
+}
 
 
 def occupancy(af_number: str | None = None, *, now: datetime | None = None) -> dict:
-    """Live headcount now plus typical counts for the rest of the local day."""
+    """Live headcount, the go-now verdict, and typicals for the rest of today."""
     af_number, name = clubs.resolve_club(af_number)
     data = clubs.busy_meter(af_number)
     moment = timeutil.local(now or timeutil.now())
+    usages = clubs.day_usages(data, moment.strftime("%A"))
     count = data.get("currentMemberCount")
-    peak = data.get("maxAverageUsage")
+    typical = _typical_for_hour(usages, moment.hour)
+    verdict, ratio = _assess(count, typical)
     return {
         "afNumber": af_number,
         "name": name,
+        "timestamp": moment.isoformat(timespec="minutes"),
         "currentMemberCount": count,
-        "maxAverageUsage": peak,
-        "busyPercent": (round(100 * count / peak, 1) if count is not None and peak else None),
+        "verdict": verdict,
+        "verdictMessage": VERDICT_MESSAGES[verdict],
+        "typicalCount": typical,
+        "ratio": None if ratio is None else round(ratio, 2),
         "restOfDay": [
             {"hour": usage["startTime"][:5], "typicalCount": usage["averageUsageValue"]}
-            for usage in clubs.day_usages(data, moment.strftime("%A"))
+            for usage in usages
             if int(usage["startTime"][:2]) >= moment.hour
         ],
     }
@@ -57,47 +72,23 @@ def forecast(
     }
 
 
-def go_now_verdict(*, now: datetime | None = None) -> dict:
-    """Live count vs the typical count for this hour, as a verdict."""
-    af_number, name = clubs.resolve_club(None)
-    data = clubs.busy_meter(af_number)
-    moment = timeutil.local(now or timeutil.now())
-    count = data.get("currentMemberCount")
+def _typical_for_hour(usages: list[dict[str, Any]], hour: int) -> int | None:
+    """The typical count for a given hour from the day's usage rows."""
+    for usage in usages:
+        if int(usage["startTime"][:2]) == hour:
+            return usage["averageUsageValue"]
+    return None
+
+
+def _assess(count: int | None, typical: int | None) -> tuple[str, float | None]:
+    """Verdict label and live/typical ratio for the given numbers."""
     if count is None:
-        return {
-            "afNumber": af_number,
-            "name": name,
-            "verdict": "no-live-data",
-            "message": "This club has no live occupancy right now.",
-        }
-    typical = None
-    for usage in clubs.day_usages(data, moment.strftime("%A")):
-        if int(usage["startTime"][:2]) == moment.hour:
-            typical = usage["averageUsageValue"]
-            break
+        return "no-live-data", None
     if not typical:
-        return {
-            "afNumber": af_number,
-            "name": name,
-            "currentMemberCount": count,
-            "verdict": "no-baseline",
-            "message": "No typical baseline for this hour.",
-        }
+        return "no-baseline", None
     ratio = count / typical
-    verdict = "skip"
-    for ceiling, name_ in VERDICT_BANDS:
-        if ratio <= ceiling:
-            verdict = name_
-            break
-    return {
-        "afNumber": af_number,
-        "name": name,
-        "timestamp": moment.isoformat(timespec="minutes"),
-        "currentMemberCount": count,
-        "typicalCount": typical,
-        "ratio": round(ratio, 2),
-        "verdict": verdict,
-    }
+    label = next((name for ceiling, name in VERDICT_BANDS if ratio <= ceiling), "skip")
+    return label, ratio
 
 
 def _resolve_day(day: str, today: date) -> date:

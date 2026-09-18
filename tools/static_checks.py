@@ -18,6 +18,7 @@ Rules:
     AF007  tests stay offline (network imports only in the offline guard)
     AF008  src raises typed errors from af_mcp.errors, never builtins
     AF009  src performs no network I/O at import time (module level)
+    AF010  the CLI is auth-only; query modules stay on the MCP server
 """
 
 from __future__ import annotations
@@ -37,6 +38,11 @@ OFFLINE_BANNED_IMPORTS = ("urllib.request", "socket", "requests", "httpx", "http
 # The offline guard is the one test file that must import socket: it patches
 # connect() and getaddrinfo() for the whole suite.
 OFFLINE_ALLOWED_IMPORTS = {"conftest.py": {"socket"}}
+# The CLI is auth-only (ADR 0004): these modules answer gym questions and
+# must stay on the MCP side.
+CLI_BANNED_MODULES = frozenset(
+    {"af_mcp.clubs", "af_mcp.occupancy", "af_mcp.visits", "af_mcp.transport"}
+)
 BUILTIN_EXCEPTION_RAISES = frozenset(
     {
         "AssertionError",
@@ -71,6 +77,7 @@ MSG_TOOL_DOC = "@mcp.tool {name}() has no docstring; it becomes the agent-facing
 MSG_TEST_OFFLINE = "tests must stay offline (found {module}); use the fake_api fixture"
 MSG_BUILTIN_RAISE = "raise {name}(...); use a typed error from af_mcp/errors.py"
 MSG_IMPORT_TIME_IO = "module-level {name}() call; imports must not perform I/O"
+MSG_CLI_AUTH_ONLY = "cli.py imports {module}; the CLI is auth-only, queries live on the MCP server"
 
 
 @dataclass(frozen=True)
@@ -140,6 +147,21 @@ def _imported_modules(tree: ast.Module) -> Iterator[tuple[str, int]]:
             yield from ((alias.name, node.lineno) for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module:
             yield (node.module, node.lineno)
+
+
+def _af_package_imports(tree: ast.Module) -> Iterator[tuple[str, int]]:
+    """Imports that resolve into af_mcp, written out in full (af_mcp.x.y)."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "af_mcp" or alias.name.startswith("af_mcp."):
+                    yield alias.name, node.lineno
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            if node.module == "af_mcp":
+                for alias in node.names:
+                    yield f"af_mcp.{alias.name}", node.lineno
+            elif node.module.startswith("af_mcp."):
+                yield node.module, node.lineno
 
 
 def _module_level_nodes(tree: ast.Module) -> Iterator[ast.AST]:
@@ -298,6 +320,17 @@ def check_tests_offline(path: Path, tree: ast.Module) -> list[Violation]:
     ]
 
 
+def check_cli_is_auth_only(path: Path, tree: ast.Module) -> list[Violation]:
+    """AF010: the CLI stays auth-only; gym queries live on the MCP server."""
+    if path.name != "cli.py":
+        return []
+    return [
+        Violation("AF010", path, lineno, MSG_CLI_AUTH_ONLY.format(module=module))
+        for module, lineno in _af_package_imports(tree)
+        if module in CLI_BANNED_MODULES
+    ]
+
+
 SRC_CHECKS = [
     check_no_unguarded_exit,
     check_no_fixed_offsets,
@@ -307,6 +340,7 @@ SRC_CHECKS = [
     check_tool_docstrings,
     check_typed_raises,
     check_no_import_time_io,
+    check_cli_is_auth_only,
 ]
 TEST_CHECKS = [check_tests_offline]
 

@@ -1,4 +1,4 @@
-"""Tests for visit history: bounded windows, summaries, stats, widen fallback."""
+"""Tests for visit history: bounded windows, summaries, widen fallback."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ def test_fetch_window_sorts_oldest_first(fake_api, auth_env):
 
 def test_default_window_is_90_days(fake_api, auth_env):
     fake_api.route("gym-visit", visits_payload([("2026-09-10T02:16:19Z", "Example Club")]))
-    result = visits.visit_history(now=NOW)
+    result = visits.visits(now=NOW)
     assert result["range"] == {"start": "2026-06-20", "end": "2026-09-18"}
 
 
@@ -49,7 +49,7 @@ def test_explicit_range_reports_totals_and_counts(fake_api, auth_env):
             ]
         ),
     )
-    result = visits.visit_history("2026-08-01", "2026-08-31", count=2, now=NOW)
+    result = visits.visits("2026-08-01", "2026-08-31", count=2, now=NOW)
     assert result["range"] == {"start": "2026-08-01", "end": "2026-08-31"}
     assert result["totalInRange"] == 3
     assert result["shown"] == 2
@@ -71,7 +71,7 @@ def test_live_counters_only_appear_when_the_range_reaches_today(fake_api, auth_e
             ]
         ),
     )
-    result = visits.visit_history(now=NOW)
+    result = visits.visits(now=NOW)
     assert result["daysSinceLastVisit"] == 8
     assert result["lastVisit"] == "2026-09-10 12:16"
     # The 90-day default window covers the last 7 days, so the counter is present.
@@ -90,19 +90,19 @@ def test_last7_and_last30_counts_within_a_wide_window(fake_api, auth_env):
             ]
         ),
     )
-    result = visits.visit_history(now=NOW)
+    result = visits.visits(now=NOW)
     assert result["last7Days"] == 1
     assert result["last30Days"] == 3
 
 
 def test_reversed_range_is_rejected():
     with pytest.raises(InvalidInputError, match="after"):
-        visits.visit_history("2026-09-10", "2026-09-01", now=NOW)
+        visits.visits("2026-09-10", "2026-09-01", now=NOW)
 
 
 def test_bad_dates_are_rejected():
     with pytest.raises(InvalidInputError):
-        visits.visit_history("last tuesday", now=NOW)
+        visits.visits("last tuesday", now=NOW)
 
 
 def test_empty_default_window_widens_once(fake_api, auth_env):
@@ -112,32 +112,34 @@ def test_empty_default_window_widens_once(fake_api, auth_env):
         return []
 
     fake_api.route("gym-visit", handler)
-    result = visits.visit_history(now=NOW)
+    result = visits.visits(now=NOW)
     assert len(fake_api.calls) == 2  # narrow fetch, then widened fetch
     assert "note" in result
     assert result["totalInRange"] == 0
     assert result["lastVisit"] == "2025-03-18 11:31"  # DST-aware: March is AEDT
 
 
-def test_visit_stats_heatmap_and_totals(fake_api, auth_env):
+def test_most_common_day_and_hour_come_with_the_range(fake_api, auth_env):
     fake_api.route(
         "gym-visit",
         visits_payload(
             [
                 ("2026-09-15T23:00:00Z", "Example Club"),  # Wed 09:00 local
-                ("2026-09-16T01:00:00Z", "Example Club"),  # Wed 11:00 local
+                ("2026-09-08T23:00:00Z", "Example Club"),  # Wed 09:00 local
                 ("2026-09-01T02:00:00Z", "Example Club"),  # Tue 12:00 local
             ]
         ),
     )
-    stats = visits.visit_stats(months=1, now=NOW)
-    assert stats["visits"] == 3
-    assert stats["mostCommonDay"][0] == "Wed"
-    assert stats["heatmap"]["Wed"]["09"] == 1
-    assert stats["heatmap"]["Wed"]["11"] == 1
-    assert stats["heatmap"]["Tue"]["11"] == 1
+    result = visits.visits(now=NOW)
+    assert result["totalInRange"] == 3
+    assert result["mostCommonDay"] == {"day": "Wed", "visits": 2}
+    assert result["mostCommonHour"] == {"hour": "09:00", "visits": 2}
 
 
-def test_visit_stats_with_no_visits(fake_api, auth_env):
+def test_no_visits_reports_zero_and_no_habits(fake_api, auth_env):
     fake_api.route("gym-visit", [])
-    assert visits.visit_stats(months=1, now=NOW) == {"visits": 0}
+    result = visits.visits("2026-08-01", "2026-08-31", now=NOW)
+    assert result["totalInRange"] == 0
+    assert result["visits"] == []
+    assert "mostCommonDay" not in result
+    assert "mostCommonHour" not in result

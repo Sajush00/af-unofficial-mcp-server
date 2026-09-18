@@ -1,175 +1,82 @@
-"""Command-line interface: the same data, no agent required."""
+"""Command-line auth for the AF MCP server.
+
+The MCP server is the primary interface for queries; this CLI exists only for
+the parts an agent cannot do itself: reading the SMS code off the phone and
+keeping the saved session in order.
+"""
 
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 
-from af_mcp import auth, render, timeutil, transport, visits
-from af_mcp.clubs import nearby
+from af_mcp import auth
 from af_mcp.errors import AFError
-from af_mcp.occupancy import forecast as build_forecast
-from af_mcp.occupancy import go_now_verdict
-from af_mcp.occupancy import occupancy as build_occupancy
 
 
 def cmd_login(args: argparse.Namespace) -> int:
+    """Request an SMS code and verify it, saving the session."""
     auth.request_sms_code(args.phone)
-    print("Code requested. Cognito will text the phone number registered on the account.")
-    print("Next: af-gym verify --code <code>")
-    return 0
-
-
-def cmd_verify(args: argparse.Namespace) -> int:
-    auth.verify_sms_code(args.code)
-    print(f"Logged in. Tokens saved (expires in {auth.status().get('accessTokenExpires')}).")
+    print("Code requested. Cognito texts the number registered on the account.")
+    code = args.code
+    if not code:
+        try:
+            code = input("SMS code: ").strip()
+        except EOFError:
+            print(
+                "No code entered. Re-run: af-gym login --phone <number> --code <code>.",
+                file=sys.stderr,
+            )
+            return 1
+        except KeyboardInterrupt:
+            print("\nCancelled.", file=sys.stderr)
+            return 1
+    auth.verify_sms_code(code)
+    expires = auth.status().get("accessTokenExpires")
+    print(f"Logged in. Access token expires {expires}.")
     return 0
 
 
 def cmd_status(_args: argparse.Namespace) -> int:
-    print(json.dumps(auth.status(), indent=2))
-    return 0
-
-
-def cmd_profile(_args: argparse.Namespace) -> int:
-    print(json.dumps(transport.api_get("me/user"), indent=2))
-    return 0
-
-
-def cmd_gym(_args: argparse.Namespace) -> int:
-    from af_mcp.clubs import home_gym
-
-    print(json.dumps(home_gym(), indent=2))
-    return 0
-
-
-def cmd_occupancy(args: argparse.Namespace) -> int:
-    result = build_occupancy(args.club)
-    print(f"{result['name']} ({result['afNumber']})")
-    if result["currentMemberCount"] is not None:
-        print(
-            f"Now: {result['currentMemberCount']} people "
-            f"({result['busyPercent']}% of typical peak {result['maxAverageUsage']})"
-        )
+    """Print one line of session state (never token values)."""
+    state = auth.status()
+    if state.get("loggedIn"):
+        auto = "auto-refresh on" if state.get("autoRefresh") else "no auto-refresh"
+        print(f"Logged in ({auto}). Access token expires {state['accessTokenExpires']}.")
     else:
-        print("No live occupancy for this club. Try `forecast` for typical values.")
-    print(render.bar_chart(result["restOfDay"], "Rest of today (typical):"))
+        print(state.get("detail", "Not logged in."))
     return 0
 
 
-def cmd_forecast(args: argparse.Namespace) -> int:
-    result = build_forecast(args.day, args.club)
-    title = (
-        f"{result['weekday']} {result['date']} at {result['name']} ({result['afNumber']}), typical:"
-    )
-    print(render.bar_chart(result["hours"], title))
-    return 0
-
-
-def cmd_nearby(args: argparse.Namespace) -> int:
-    gym, clubs = nearby(args.radius, args.limit)
-    print(f"Clubs within {args.radius} km of {gym['name']} ({gym['afNumber']}):")
-    print()
-    for club in clubs:
-        live = (
-            f"{club['currentMemberCount']} in now"
-            if club["currentMemberCount"] is not None
-            else "no live data"
-        )
-        star = " <- home" if club["isHomeGym"] else ""
-        print(
-            f"  {club['afNumber']:<8} {club['name']:<28} {club['distanceKm']:>5} km  "
-            f"{club['status'] or '':<9} {live}{star}"
-        )
-        print(f"           {club['address']}")
-    return 0
-
-
-def cmd_visits(args: argparse.Namespace) -> int:
-    stats = visits.visit_stats(args.months)
-    if not stats.get("visits"):
-        print("No visits found.")
-        return 0
-    print(f"{stats['visits']} visits since {stats['since']}")
-    print()
-    print(render.heatmap(stats))
-    print()
-    print("Legend: . none   lower blocks light, higher blocks busy")
-    print(f"Most common day: {stats['mostCommonDay'][0]} ({stats['mostCommonDay'][1]} visits)")
-    print(f"Most common hour: {stats['mostCommonHour']}")
-    print(f"Last visit: {stats['lastVisit']}")
-    return 0
-
-
-def cmd_when(_args: argparse.Namespace) -> int:
-    result = go_now_verdict()
-    print(f"{result['name']} ({result['afNumber']}), {timeutil.moment_string(timeutil.now())}")
-    if result.get("verdict") in ("no-live-data", "no-baseline"):
-        print(result["message"])
-        return 0
-    percent = round((result["ratio"] - 1) * 100)
-    if percent == 0:
-        difference = "exactly typical"
+def cmd_logout(_args: argparse.Namespace) -> int:
+    """Revoke the refresh token (best effort) and delete local tokens."""
+    result = auth.logout()
+    if not result["hadSession"]:
+        print("No saved session.")
+    elif result["revoked"]:
+        print("Logged out. Refresh token revoked and local state deleted.")
     else:
-        direction = "busier" if percent > 0 else "quieter"
-        difference = f"{abs(percent)}% {direction} than usual"
-    print(
-        f"Now: {result['currentMemberCount']} people "
-        f"(typical: {result['typicalCount']}) - {difference}."
-    )
-    print(render.VERDICT_TEXT[result["verdict"]])
+        print("Logged out locally. The refresh token expires on its own.")
     return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="af-gym",
-        description="Anytime Fitness client (unofficial).",
+        description="Auth for the AF MCP server (login, status, logout).",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("login", help="request an SMS login code")
+    p = sub.add_parser("login", help="log in with an SMS code")
     p.add_argument("--phone", required=True, help="phone in E.164 format, e.g. +61400000000")
+    p.add_argument("--code", help="SMS code; skips the prompt (useful in scripts)")
     p.set_defaults(func=cmd_login)
 
-    p = sub.add_parser("verify", help="verify the SMS code and save tokens")
-    p.add_argument("--code", required=True)
-    p.set_defaults(func=cmd_verify)
-
-    p = sub.add_parser("status", help="show session metadata (never token values)")
+    p = sub.add_parser("status", help="show the saved session state")
     p.set_defaults(func=cmd_status)
 
-    p = sub.add_parser("profile", help="show account details")
-    p.set_defaults(func=cmd_profile)
-
-    p = sub.add_parser("gym", help="show home gym details")
-    p.set_defaults(func=cmd_gym)
-
-    p = sub.add_parser("occupancy", help="live headcount + rest-of-day typical")
-    p.add_argument("club", nargs="?", help="club af-number (default: home gym)")
-    p.set_defaults(func=cmd_occupancy)
-
-    p = sub.add_parser("forecast", help="typical hourly pattern for a day")
-    p.add_argument("club", nargs="?", help="club af-number (default: home gym)")
-    p.add_argument(
-        "--day",
-        default="tomorrow",
-        help="'today', 'tomorrow', or a weekday name (default: tomorrow)",
-    )
-    p.set_defaults(func=cmd_forecast)
-
-    p = sub.add_parser("nearby", help="clubs around your home gym with live counts")
-    p.add_argument("--radius", type=int, default=25, help="search radius in km (default 25)")
-    p.add_argument("--limit", type=int, default=5, help="max clubs (default 5)")
-    p.set_defaults(func=cmd_nearby)
-
-    p = sub.add_parser("visits", help="visit history with heatmap")
-    p.add_argument("--months", type=int, default=12, help="lookback months (default 12)")
-    p.set_defaults(func=cmd_visits)
-
-    p = sub.add_parser("when", help="go-now verdict: live count vs typical for this hour")
-    p.set_defaults(func=cmd_when)
+    p = sub.add_parser("logout", help="revoke the session and delete local tokens")
+    p.set_defaults(func=cmd_logout)
 
     return parser
 

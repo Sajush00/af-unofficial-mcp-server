@@ -54,7 +54,8 @@ def request_json(
     """Perform one HTTP request and decode the JSON response.
 
     Raises ApiError for error statuses and TransportError when no response
-    arrives at all.
+    arrives at all. An empty 200 body returns None (some Cognito operations
+    reply with no body).
     """
     try:
         with _open(
@@ -67,6 +68,8 @@ def request_json(
         raise ApiError(exc.code, detail, url.split("?")[0]) from exc
     except urllib.error.URLError as exc:
         raise TransportError(f"Network failure for {url.split('?')[0]}: {exc.reason}") from exc
+    if not payload.strip():
+        return None
     try:
         return json.loads(payload)
     except json.JSONDecodeError as exc:

@@ -1,7 +1,7 @@
-"""Visit history: bounded window fetches, summaries, and stats.
+"""Visit history: bounded window fetches and range summaries.
 
 Every query sends an explicit [startDate, endDate] pair (enforced by static
-check AF001). The endpoint accepts dates back to account creation, so an
+check AF005). The endpoint accepts dates back to account creation, so an
 unbounded fetch is one missing parameter away; that default is gone on
 purpose, whole-history pulls bloat agent context for no benefit.
 """
@@ -53,14 +53,14 @@ def fetch_window(start: datetime, end: datetime) -> list[Visit]:
     return visits
 
 
-def visit_history(
+def visits(
     start: str | None = None,
     end: str | None = None,
     count: int = 20,
     *,
     now: datetime | None = None,
 ) -> dict:
-    """Check-ins in a date range, newest first, with totals for the range.
+    """Check-ins in a date range, newest first, with totals and habits.
 
     Defaults to the last 90 days. When the range is empty and both ends were
     defaulted, widens once to find the most recent visit on record.
@@ -79,9 +79,9 @@ def visit_history(
             f"({timeutil.moment_string(end_dt)})."
         )
 
-    visits = fetch_window(start_dt, end_dt)
+    found = fetch_window(start_dt, end_dt)
     widened: list[Visit] | None = None
-    if not visits and start is None and end is None:
+    if not found and start is None and end is None:
         widened = fetch_window(moment - timedelta(days=WIDEN_WINDOW_DAYS), moment)
 
     result: dict = {
@@ -89,7 +89,7 @@ def visit_history(
             "start": timeutil.date_string(start_dt),
             "end": timeutil.date_string(end_dt),
         },
-        "totalInRange": len(visits),
+        "totalInRange": len(found),
         "shown": 0,
         "truncated": False,
         "visits": [],
@@ -102,23 +102,23 @@ def visit_history(
             if widened
             else f"No visits in the last {WIDEN_WINDOW_DAYS} days."
         )
-    latest = visits[-1] if visits else (widened[-1] if widened else None)
+    latest = found[-1] if found else (widened[-1] if widened else None)
     if latest and end_dt >= moment:
         result["lastVisit"] = timeutil.moment_string(latest.at)
         result["daysSinceLastVisit"] = timeutil.days_ago(latest.at, reference=moment)
-        if visits:
+        if found:
             if start_dt <= moment - timedelta(days=7):
                 result["last7Days"] = sum(
-                    1 for visit in visits if timeutil.days_ago(visit.at, reference=moment) < 7
+                    1 for visit in found if timeutil.days_ago(visit.at, reference=moment) < 7
                 )
             if start_dt <= moment - timedelta(days=30):
                 result["last30Days"] = sum(
-                    1 for visit in visits if timeutil.days_ago(visit.at, reference=moment) < 30
+                    1 for visit in found if timeutil.days_ago(visit.at, reference=moment) < 30
                 )
-    if visits:
-        shown = visits[-count:]
+    if found:
+        shown = found[-count:]
         result["shown"] = len(shown)
-        result["truncated"] = len(shown) < len(visits)
+        result["truncated"] = len(shown) < len(found)
         result["visits"] = [
             {
                 "local": timeutil.moment_string(visit.at),
@@ -128,30 +128,10 @@ def visit_history(
             }
             for visit in reversed(shown)
         ]
+        by_day = Counter(visit.at.strftime("%a") for visit in found)
+        by_hour = Counter(visit.at.hour for visit in found)
+        day, day_count = by_day.most_common(1)[0]
+        hour, hour_count = by_hour.most_common(1)[0]
+        result["mostCommonDay"] = {"day": day, "visits": day_count}
+        result["mostCommonHour"] = {"hour": f"{hour:02d}:00", "visits": hour_count}
     return result
-
-
-def visit_stats(months: int = 12, *, now: datetime | None = None) -> dict:
-    """Visit totals, most common day/hour, and a weekday x hour heatmap."""
-    moment = timeutil.local(now or timeutil.now())
-    visits = fetch_window(moment - timedelta(days=30 * months), moment)
-    if not visits:
-        return {"visits": 0}
-    days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-    buckets = [(hour, hour + 2) for hour in range(5, 22, 2)]
-    grid = {day: {f"{b[0]:02d}": 0 for b in buckets} for day in days}
-    for visit in visits:
-        for bucket in buckets:
-            if bucket[0] <= visit.at.hour < bucket[1]:
-                grid[days[visit.at.weekday()]][f"{bucket[0]:02d}"] += 1
-                break
-    by_day = Counter(visit.at.strftime("%a") for visit in visits)
-    by_hour = Counter(visit.at.hour for visit in visits)
-    return {
-        "visits": len(visits),
-        "since": timeutil.date_string(visits[0].at),
-        "lastVisit": timeutil.moment_string(visits[-1].at),
-        "mostCommonDay": list(by_day.most_common(1)[0]),
-        "mostCommonHour": f"{by_hour.most_common(1)[0][0]:02d}:00",
-        "heatmap": grid,
-    }

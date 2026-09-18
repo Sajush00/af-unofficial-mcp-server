@@ -1,7 +1,7 @@
 [project]
 name = "af-unofficial-mcp-server"
 version = "0.2.0"
-description = "Unofficial Anytime Fitness MCP server, with a small CLI for login and one-off queries."
+description = "Unofficial Anytime Fitness MCP server, with a small auth-only CLI."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = ["fastmcp>=2.0"]

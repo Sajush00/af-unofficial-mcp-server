@@ -10,6 +10,7 @@ tests keep state out of the real home directory.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import time
@@ -23,10 +24,7 @@ from af_mcp.errors import AFError, LoginRequiredError
 COGNITO_URL = "https://cognito-idp.us-east-1.amazonaws.com/"
 COGNITO_CLIENT_ID = "r56fk5c6c5gfaegh5j673hdeq"
 
-LOGIN_HINT = (
-    "No usable Anytime Fitness session. Run: af-gym login --phone <number>, "
-    "then af-gym verify --code <code>."
-)
+LOGIN_HINT = "No usable Anytime Fitness session. Run: af-gym login --phone <number>."
 
 
 def default_token_file() -> Path:
@@ -123,6 +121,27 @@ class Authenticator:
             "autoRefresh": bool(stored.get("RefreshToken")),
         }
 
+    def logout(self) -> dict[str, Any]:
+        """Revoke the refresh token (best effort, needs one more request).
+
+        Local state is always deleted, so a failed revoke still logs out;
+        the refresh token simply stays valid server-side until it expires.
+        """
+        stored = self._load() or {}
+        had_session = self.token_file.exists() or self.session_file.exists()
+        revoked = False
+        refresh_token = stored.get("RefreshToken")
+        if refresh_token:
+            with contextlib.suppress(AFError):
+                self._cognito(
+                    "RevokeToken",
+                    {"Token": refresh_token, "ClientId": COGNITO_CLIENT_ID},
+                )
+                revoked = True
+        self.token_file.unlink(missing_ok=True)
+        self.session_file.unlink(missing_ok=True)
+        return {"hadSession": had_session, "revoked": revoked}
+
     # ------------------------------------------------------------- internals
     def _cognito(self, operation: str, body: dict[str, Any]) -> dict[str, Any]:
         response = http.request_json(
@@ -134,6 +153,9 @@ class Authenticator:
             body=json.dumps(body).encode(),
             method="POST",
         )
+        if response is None:
+            # Operations without output (like RevokeToken) reply with no body.
+            return {}
         if not isinstance(response, dict):
             raise AFError("Cognito returned an unexpected response shape.")
         return response
@@ -197,3 +219,8 @@ def access_token() -> str:
 def status() -> dict[str, Any]:
     """Describe the saved session without returning token values."""
     return Authenticator().status()
+
+
+def logout() -> dict[str, Any]:
+    """Revoke the refresh token (best effort) and delete the default session."""
+    return Authenticator().logout()

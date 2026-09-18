@@ -17,10 +17,8 @@ from factories import visits as visits_payload
 EXPECTED_TOOLS = {
     "occupancy",
     "forecast",
-    "go_now_verdict",
     "nearby_clubs",
-    "visit_stats",
-    "visit_history",
+    "visits",
     "auth_status",
 }
 
@@ -41,21 +39,24 @@ def test_tool_surface_is_exactly_the_documented_set(fake_api, auth_env):
     assert asyncio.run(names()) == EXPECTED_TOOLS
 
 
-def test_visit_history_tool_returns_the_windowed_summary(fake_api, auth_env):
+def test_visits_tool_returns_the_windowed_summary(fake_api, auth_env):
     fake_api.route("gym-visit", visits_payload([("2026-09-10T02:16:19Z", "Example Club")]))
-    result = call_tool("visit_history", {"start": "2026-09-01", "end": "2026-09-18"})
+    result = call_tool("visits", {"start": "2026-09-01", "end": "2026-09-18"})
     data = result.data
     assert data["totalInRange"] == 1
     assert data["visits"][0]["club"] == "Example Club"
     assert data["range"] == {"start": "2026-09-01", "end": "2026-09-18"}
 
 
-def test_occupancy_tool_works_end_to_end(fake_api, auth_env):
+def test_occupancy_tool_carries_the_verdict_fields(fake_api, auth_env):
     fake_api.route("my-gym", home_gym_payload())
     fake_api.route("busy-meter", busy_meter(current=7, peak=50))
     data = call_tool("occupancy").data
     assert data["currentMemberCount"] == 7
     assert data["afNumber"] == "AU-0000"
+    # The fixture has no weekDays, so there is no baseline for this hour.
+    assert data["verdict"] == "no-baseline"
+    assert data["verdictMessage"]
 
 
 def test_auth_errors_become_tool_errors_with_a_login_hint(fake_api):
@@ -65,7 +66,7 @@ def test_auth_errors_become_tool_errors_with_a_login_hint(fake_api):
 
 def test_bad_input_becomes_a_tool_error(fake_api, auth_env):
     with pytest.raises(ToolError, match="after"):
-        call_tool("visit_history", {"start": "2026-09-10", "end": "2026-09-01"})
+        call_tool("visits", {"start": "2026-09-10", "end": "2026-09-01"})
 
 
 def test_transport_errors_become_tool_errors(fake_api, auth_env):

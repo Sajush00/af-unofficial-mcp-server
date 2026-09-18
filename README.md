@@ -5,16 +5,17 @@ forecasts, nearby clubs, and personal visit history. It talks to the AF App
 4.5.0 mobile API. Read-only, single
 account, personal use.
 
+The MCP server is the primary interface. The `af-gym` CLI exists only for
+the SMS login flow — the one thing an agent cannot do by itself.
+
 ## Tools
 
 | Tool | Returns |
 |---|---|
-| `occupancy` | Live headcount now, plus typical counts for the rest of today |
+| `occupancy` | Live headcount now, a go-now verdict, and typical counts for the rest of today |
 | `forecast` | Typical hourly pattern for a day (100-day rolling averages) |
-| `go_now_verdict` | Go, wait, or skip, comparing the live count to this hour's typical |
 | `nearby_clubs` | Clubs near the home gym, nearest first, each with a live count |
-| `visit_stats` | Visit totals, most common day and hour, weekday x hour heatmap |
-| `visit_history` | Check-ins in a date range, newest first, with range totals |
+| `visits` | Check-ins in a date range, newest first, with totals and your usual day and hour |
 | `auth_status` | Session metadata only, never token values |
 
 ## Quick start
@@ -22,9 +23,9 @@ account, personal use.
 ```bash
 uv sync
 
-# One-time login. Cognito texts the code to the number registered with the club.
+# One-time login. Cognito texts a code to the number registered with the club;
+# the command prompts for it. Add --code to run it non-interactively.
 uv run af-gym login --phone +61400000000
-uv run af-gym verify --code 123456
 
 # Run the MCP server (stdio; MCP clients usually launch it for you)
 uv run af-mcp
@@ -62,18 +63,15 @@ claude mcp add af-gym -- uv run --directory /absolute/path/to/af-unofficial-mcp-
 
 ## CLI
 
-The same data from a shell. Useful for the login flow and quick checks.
+Authentication only. Queries live on the MCP server (see
+[ADR 0004](docs/adr/0004-auth-only-cli.md)); the CLI cannot grow query
+commands back.
 
 | Command | Does |
 |---|---|
-| `af-gym login --phone <n>` / `verify --code <c>` | SMS login, saves the session |
+| `af-gym login --phone <n> [--code <c>]` | SMS login in one step; prompts for the code, `--code` for scripts |
 | `af-gym status` | Session metadata, never token values |
-| `af-gym occupancy [club]` | Live headcount and rest-of-day typical |
-| `af-gym forecast [club] --day saturday` | Typical hourly pattern |
-| `af-gym nearby --radius 15` | Clubs around home with live counts |
-| `af-gym visits --months 12` | Visit heatmap and totals |
-| `af-gym when` | Go-now verdict for this hour |
-| `af-gym profile` / `gym` | Raw account and home-club JSON |
+| `af-gym logout` | Revoke the refresh token and delete local tokens |
 
 ## How it is built
 
@@ -85,17 +83,16 @@ src/af_mcp/
 ├── errors.py      typed error hierarchy
 ├── timeutil.py    club-local time (zoneinfo, DST-correct)
 ├── clubs.py       home gym, busy meter, nearby search
-├── occupancy.py   occupancy, forecast, verdict
-├── visits.py      windowed visit history and stats
-├── render.py      text rendering for the CLI
+├── occupancy.py   live occupancy + go-now verdict, forecast
+├── visits.py      windowed visit history
 ├── server.py      the MCP tool surface
-└── cli.py         the CLI surface
+└── cli.py         auth commands only (login, status, logout)
 tools/static_checks.py   project-specific lint rules (see below)
 tests/                   offline test suite (fake transport, no sockets)
 ```
 
-`server.py` and `cli.py` are thin adapters over the same domain modules, so
-both surfaces return identical numbers for identical questions.
+`server.py` is the product; `cli.py` stays small because reading an SMS code
+off a phone is the one step no agent can take for you.
 
 ## Checks
 
@@ -121,6 +118,7 @@ tests, so the suite fails when the codebase regresses:
 | AF007 | a test imports `urllib.request`, `socket`, `requests`, or `httpx` | Tests replay recorded shapes; the suite must never depend on the network (conftest imports `socket` exactly once, to block it) |
 | AF008 | `src` raises a builtin exception (`ValueError`, `RuntimeError`, ...) | The first version raised `RuntimeError` from deep code; callers could not tell "log in" from "API is down" |
 | AF009 | a network call runs at import time | Importing a module must never touch the network; tools fetch, imports do not |
+| AF010 | `cli.py` imports `clubs`, `occupancy`, `visits`, or `transport` | The CLI is auth-only (ADR 0004); querying lives on the MCP side so the two surfaces cannot drift |
 
 ## Auth model
 
@@ -130,6 +128,8 @@ tests, so the suite fails when the codebase regresses:
 - Refresh tokens last about 30 days and are not rotated, so one SMS login
   covers roughly a month of use. After ~30 idle days, `auth_status` reports
   the session is gone and a fresh login is due.
+- `af-gym logout` revokes the refresh token (best effort) and deletes the
+  local state.
 - No tool ever returns token values.
 
 ## Disclaimer

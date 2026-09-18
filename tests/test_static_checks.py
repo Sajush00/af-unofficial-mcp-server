@@ -147,6 +147,19 @@ def test_af009_allows_calls_inside_functions():
     assert rules(source) == set()
 
 
+# ------------------------------------------------------------------ AF010
+def test_af010_fires_on_query_imports_in_the_cli():
+    assert "AF010" in rules("from af_mcp import occupancy\n", filename="cli.py")
+    assert "AF010" in rules("from af_mcp.visits import visits\n", filename="cli.py")
+
+
+def test_af010_allows_auth_imports():
+    source = "from af_mcp import auth\nfrom af_mcp.errors import AFError\n"
+    assert rules(source, filename="cli.py") == set()
+    # the same import in any other module is unremarkable
+    assert rules("from af_mcp.visits import visits\n") == set()
+
+
 # ------------------------------------------------------------------ the repo
 def test_the_repository_itself_is_clean():
     violations = scan([REPO / "src" / "af_mcp", REPO / "tests"])

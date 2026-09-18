@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from af_mcp import auth
-from af_mcp.errors import LoginRequiredError
+from af_mcp.errors import LoginRequiredError, TransportError
 from factories import read_token, write_token
 
 COGNITO = "cognito-idp"
@@ -149,3 +149,34 @@ def test_status_without_session(fake_api, auth_env: Path):
     status = auth.status()
     assert status["loggedIn"] is False
     assert "login" in status["detail"].lower()
+
+
+def test_logout_revokes_and_deletes_local_state(fake_api, auth_env: Path):
+    fake_api.route(COGNITO, None)  # RevokeToken replies with an empty body
+    result = auth.logout()
+    assert result == {"hadSession": True, "revoked": True}
+    assert not (auth_env / "token.json").exists()
+    targets = [call["headers"].get("X-Amz-Target", "") for call in fake_api.calls]
+    assert targets == ["AWSCognitoIdentityProviderService.RevokeToken"]
+
+
+def test_logout_without_refresh_token_stays_local(fake_api, auth_env: Path):
+    write_token(auth_env, refresh=None)
+    result = auth.logout()
+    assert result == {"hadSession": True, "revoked": False}
+    assert fake_api.calls == []
+    assert not (auth_env / "token.json").exists()
+
+
+def test_logout_without_a_session_is_a_no_op(fake_api, auth_env: Path):
+    (auth_env / "token.json").unlink()
+    result = auth.logout()
+    assert result == {"hadSession": False, "revoked": False}
+    assert fake_api.calls == []
+
+
+def test_logout_survives_a_failed_revoke(fake_api, auth_env: Path):
+    fake_api.route(COGNITO, TransportError("offline"))
+    result = auth.logout()
+    assert result == {"hadSession": True, "revoked": False}
+    assert not (auth_env / "token.json").exists()
