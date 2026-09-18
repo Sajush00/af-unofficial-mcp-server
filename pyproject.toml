@@ -1,0 +1,86 @@
+[project]
+name = "af-unofficial-mcp-server"
+version = "0.2.0"
+description = "Unofficial Anytime Fitness MCP server, with a small CLI for login and one-off queries."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["fastmcp>=2.0"]
+
+[project.scripts]
+af-mcp = "af_mcp.server:main"
+af-gym = "af_mcp.cli:main"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.11",
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/af_mcp"]
+
+# ---------------------------------------------------------------- ruff
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests", "tools"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes
+    "I",         # import order
+    "N",         # naming
+    "UP",        # pyupgrade
+    "FA",        # future annotations
+    "B",         # bugbear
+    "SIM",       # simplifications
+    "C4",        # comprehensions
+    "RET",       # return style
+    "ARG",       # unused arguments
+    "PTH",       # pathlib
+    "DTZ",       # timezone-aware datetimes
+    "T20",       # stray prints
+    "S",         # bandit-style security checks
+    "TRY",       # exception style
+    "PERF",      # performance footguns
+    "RUF",       # ruff-specific
+    "PIE",       # pie
+    "ISC",       # implicit string concatenation
+]
+ignore = [
+    # TRY003 wants messages defined inside exception classes; this package
+    # builds contextual messages at raise sites on purpose (errors.py owns
+    # the error categories, call sites own the details).
+    "TRY003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# The CLI and the static checker print by design; nothing else may.
+"src/af_mcp/cli.py" = ["T20"]
+"tools/static_checks.py" = ["T20"]
+"tests/**" = ["S101", "S105", "S106", "S107", "ARG001", "ARG002"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["af_mcp", "factories", "static_checks"]
+
+# ---------------------------------------------------------------- mypy
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "src"
+packages = ["af_mcp"]
+disallow_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+check_untyped_defs = true
+
+# ---------------------------------------------------------------- pytest
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "tools", "tests"]
