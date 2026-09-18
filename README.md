@@ -113,8 +113,8 @@ No command or tool ever prints the token values.
 ## For developers
 
 `make check` runs everything: ruff for lint and formatting, mypy for types,
-the project's static checks, and the test suite. The tests never touch the
-network, so they need no account and no internet.
+a bunch of custom lint rules for this project, and the test suite. The tests
+never touch the network, so they need no account and no internet.
 
 The MCP server is the product. The CLI does login, status, and logout, and
 stays that way on purpose, with the reasoning in
@@ -146,25 +146,6 @@ src/af_mcp/
 tools/static_checks.py   project-specific lint rules
 tests/                   offline test suite
 ```
-
-### Why the static checks exist
-
-Every rule here is a mistake I actually made at least once. They run inside
-`make check` and as regular tests, so a regression fails the suite right
-away.
-
-| Rule | Fails when | Because |
-|---|---|---|
-| AF001 | `raise SystemExit` or `sys.exit` outside a `__main__` guard | The first version killed the MCP server process on a missing token instead of returning an error |
-| AF002 | `timezone(timedelta(...))` appears anywhere | A hardcoded +10 offset was an hour wrong for half the year; Sydney uses +11 in summer |
-| AF003 | `datetime.now()`/`today()` appears outside `timeutil.py` | Ad-hoc clock reads made tests time-dependent and hid the DST bug |
-| AF004 | `urllib` is imported outside `http.py` | One network seam means one place to fake, time out, and audit |
-| AF005 | a `gym-visit` fetch misses `startDate` or `endDate` | Unbounded pulls dump whole history into agent context for no benefit |
-| AF006 | an `@mcp.tool` has no docstring | The docstring is the description the agent sees; an undocumented tool gets misused |
-| AF007 | a test imports `urllib.request`, `socket`, `requests`, or `httpx` | Tests replay recorded shapes and must never depend on the network; conftest imports `socket` exactly once, to block it |
-| AF008 | `src` raises a builtin exception like `ValueError` or `RuntimeError` | The first version raised `RuntimeError` from deep code; callers could not tell "log in" from "API is down" |
-| AF009 | a network call runs at import time | Importing a module must never touch the network; tools fetch, imports do not |
-| AF010 | `cli.py` imports `clubs`, `occupancy`, `visits`, or `transport` | The CLI is auth-only, per ADR 0004. Queries live on the MCP side so the two cannot drift apart |
 
 ## Disclaimer
 
